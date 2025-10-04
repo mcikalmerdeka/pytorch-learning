@@ -9,7 +9,9 @@ import math
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from sklearn.impute import KNNImputer, IterativeImputer
 
-# =====================================================================Functions for data pre-processing========================================================================
+# ╔══════════════════════════════════════════════════════════════════════════════════╗
+# ║                       Functions for Data Pre-Processing                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════════╝
 
 ## Checking basic data information
 def check_data_information(data, cols):
@@ -142,43 +144,76 @@ def handle_missing_values(data, columns, strategy='median', imputer=None, n_neig
     else:
         raise ValueError(f"Unknown strategy: {strategy}. Use 'median', 'mean', 'mode', 'ffill', 'bfill', 'knn', 'iterative', or 'remove'")
 
-## Handle outliers function
-def filter_outliers(data, columns, method='iqr', threshold=1.5, return_mask=False):
+## Handle and detect outliers function
+def filter_outliers(data, columns, method='iqr', threshold=1.5, detect_only=False, return_mask=False, verbose=True):
     """
-    Filter outliers from specified columns using IQR or Z-score method.
+    Unified function to detect and/or filter outliers using IQR or Z-score method.
     
     Parameters:
     -----------
     data : pd.DataFrame
-        The dataframe to filter
+        The dataframe to process
     columns : list
         List of column names to check for outliers
     method : str, default='iqr'
         Method to detect outliers: 'iqr' or 'zscore'
     threshold : float, default=1.5
-        For IQR: multiplier for IQR range (default 1.5)
-        For Z-score: max absolute z-score (default 1.5, typically use 3)
+        For IQR: multiplier for IQR range (default 1.5, typically 1.5-3)
+        For Z-score: max absolute z-score (default 1.5, typically 2-3)
+    detect_only : bool, default=False
+        If True, returns summary DataFrame of outliers (detection mode)
+        If False, returns filtered dataframe (filtering mode)
     return_mask : bool, default=False
-        If True, returns (filtered_data, mask). Useful for debugging.
+        Only for filtering mode: if True, returns (filtered_data, mask)
+    verbose : bool, default=True
+        Only for detection mode: if True, prints summary statistics
     
     Returns:
     --------
-    pd.DataFrame or tuple
-        Filtered dataframe, or (filtered_data, mask) if return_mask=True
+    Detection mode (detect_only=True):
+        pd.DataFrame: Summary with columns, bounds, counts, percentages
+    
+    Filtering mode (detect_only=False):
+        pd.DataFrame or tuple: Filtered data, or (filtered_data, mask) if return_mask=True
+    
+    Examples:
+    --------
+    # Detection mode - analyze outliers
+    summary = filter_outliers(df, columns=['col1', 'col2'], method='iqr', detect_only=True)
+    
+    # Filtering mode - remove outliers
+    df_clean = filter_outliers(df, columns=['col1', 'col2'], method='iqr', threshold=1.5)
+    
+    # With mask for debugging
+    df_clean, mask = filter_outliers(df, columns=['col1'], return_mask=True)
     """
     if columns is None or len(columns) == 0:
+        if detect_only:
+            return pd.DataFrame()
         return data if not return_mask else (data, np.array([True] * len(data)))
 
     if method.lower() not in ['iqr', 'zscore']:
         raise ValueError("Method must be either 'iqr' or 'zscore'")
     
+    # Validate columns
+    missing_cols = [col for col in columns if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+    
+    # Initialize tracking variables for detection mode
+    if detect_only:
+        outlier_counts = []
+        non_outlier_counts = []
+        is_outlier_list = []
+        low_bounds = []
+        high_bounds = []
+        outlier_percentages = []
+    
     # Start with all rows marked as True (non-outliers)
     filtered_entries = np.array([True] * len(data))
     
+    # Loop through each column
     for col in columns:
-        if col not in data.columns:
-            raise ValueError(f"Column '{col}' not found in dataframe")
-
         # IQR method
         if method.lower() == 'iqr':
             Q1 = data[col].quantile(0.25)
@@ -192,11 +227,48 @@ def filter_outliers(data, columns, method='iqr', threshold=1.5, return_mask=Fals
         elif method.lower() == 'zscore':
             z_scores = np.abs(stats.zscore(data[col]))
             filter_outlier = (z_scores < threshold)
+            
+            mean = data[col].mean()
+            std = data[col].std()
+            lower_bound = mean - (threshold * std)
+            upper_bound = mean + (threshold * std)
+        
+        # Store detection statistics
+        if detect_only:
+            outlier_count = len(data[~filter_outlier])
+            non_outlier_count = len(data[filter_outlier])
+            outlier_pct = round((outlier_count / len(data)) * 100, 2)
+            
+            outlier_counts.append(outlier_count)
+            non_outlier_counts.append(non_outlier_count)
+            is_outlier_list.append(data[col][~filter_outlier].any())
+            low_bounds.append(lower_bound)
+            high_bounds.append(upper_bound)
+            outlier_percentages.append(outlier_pct)
         
         # Combine filters
         filtered_entries = filtered_entries & filter_outlier
     
-    # Return the filtered data and mask if requested
+    # Detection mode - return summary DataFrame
+    if detect_only:
+        if verbose:
+            print(f'Amount of Rows: {len(data)}')
+            print(f'Amount of Outlier Rows (Across All Columns): {len(data[~filtered_entries])}')
+            print(f'Amount of Non-Outlier Rows (Across All Columns): {len(data[filtered_entries])}')
+            print(f'Percentage of Outliers: {round(len(data[~filtered_entries]) / len(data) * 100, 2)}%')
+            print()
+        
+        return pd.DataFrame({
+            'Column Name': columns,
+            'Outlier Exist': is_outlier_list,
+            'Lower Limit': low_bounds,
+            'Upper Limit': high_bounds,
+            'Outlier Data': outlier_counts,
+            'Non-Outlier Data': non_outlier_counts,
+            'Outlier Percentage (%)': outlier_percentages
+        })
+    
+    # Filtering mode - return filtered data
     if return_mask:
         return data[filtered_entries], filtered_entries
     return data[filtered_entries]
@@ -268,9 +340,11 @@ def feature_scaling(data, columns, method='standard', scaler=None, apply_log=Fal
     
     return df_scaled, scaler
 
-# =====================================================================Functions for statistical summary========================================================================
+# ╔══════════════════════════════════════════════════════════════════════════════════╗
+# ║                       Functions for Statistical Summary                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════════╝
 
-# Describe numerical columns
+## Describe numerical columns
 def describe_numerical_combined(data, col_series, target_col=None):
     """
     Generate descriptive statistics for numerical columns in a dataframe,
@@ -445,9 +519,11 @@ def describe_categorical_combined(data, col_series, target_col=None):
     
     return final_summary
 
-# =====================================================================Functions for data visualization========================================================================
+# ╔══════════════════════════════════════════════════════════════════════════════════╗
+# ║                       Functions for Data Visualization                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════════╝
 
-# Hisplot and kdeplot analysis
+## Hisplot and kdeplot analysis
 def plot_dynamic_hisplots_kdeplots(df, col_series, plot_type='histplot', ncols=6, figsize=(26, 18), hue=None, multiple='layer', fill=None):
     """
     Creates a dynamic grid of histogram plots (with KDE) or KDE plots for multiple numerical columns.
@@ -532,7 +608,7 @@ def plot_dynamic_hisplots_kdeplots(df, col_series, plot_type='histplot', ncols=6
     plt.tight_layout()  # Adjust layout to avoid overlap
     plt.show()
 
-# Distribution type analysis
+## Distribution type analysis
 def identify_distribution_types(df, col_series, uniform_cols=None, multimodal_cols=None):
     """
     Identifies and categorizes the distribution type of each numerical column in the DataFrame based on skewness and kurtosis.
