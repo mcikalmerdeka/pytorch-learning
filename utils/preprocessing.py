@@ -7,7 +7,7 @@ import seaborn as sns
 import math
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
-from sklearn.impute import KNNImputer, IterativeImputer
+from sklearn.impute import KNNImputer
 
 # ╔══════════════════════════════════════════════════════════════════════════════════╗
 # ║                       Functions for Data Pre-Processing                          ║
@@ -64,10 +64,9 @@ def handle_missing_values(data, columns, strategy='median', imputer=None, n_neig
         - 'median', 'mean', 'mode': Simple imputation
         - 'ffill', 'bfill': Forward/backward fill
         - 'knn': K-Nearest Neighbors imputation (advanced)
-        - 'iterative': Iterative imputation using other features (advanced)
         - 'remove': Drop rows with missing values
     imputer : sklearn imputer object, default=None
-        Pre-fitted imputer for test data (for 'knn' or 'iterative')
+        Pre-fitted imputer for test data (for 'knn')
     n_neighbors : int, default=5
         Number of neighbors for KNN imputation
     
@@ -89,7 +88,7 @@ def handle_missing_values(data, columns, strategy='median', imputer=None, n_neig
     
     # Apply same imputer on test data
     X_test_imputed, _ = handle_missing_values(X_test, columns=['col1', 'col2'], 
-                                               strategy='knn', imputer=imputer)
+                                               imputer=imputer)
     """
     if columns is None or len(columns) == 0:
         return data, None
@@ -132,17 +131,8 @@ def handle_missing_values(data, columns, strategy='median', imputer=None, n_neig
             df_imputed[columns] = imputer.transform(df_imputed[columns])
         return df_imputed, imputer
     
-    # Iterative imputation (advanced - similar to MICE)
-    elif strategy == 'iterative':
-        if imputer is None:
-            imputer = IterativeImputer(random_state=42, max_iter=10)
-            df_imputed[columns] = imputer.fit_transform(df_imputed[columns])
-        else:
-            df_imputed[columns] = imputer.transform(df_imputed[columns])
-        return df_imputed, imputer
-    
     else:
-        raise ValueError(f"Unknown strategy: {strategy}. Use 'median', 'mean', 'mode', 'ffill', 'bfill', 'knn', 'iterative', or 'remove'")
+        raise ValueError(f"Unknown strategy: {strategy}. Use 'median', 'mean', 'mode', 'ffill', 'bfill', 'knn', or 'remove'")
 
 ## Handle and detect outliers function
 def filter_outliers(data, columns, method='iqr', threshold=1.5, detect_only=False, return_mask=False, verbose=True):
@@ -608,6 +598,86 @@ def plot_dynamic_hisplots_kdeplots(df, col_series, plot_type='histplot', ncols=6
     plt.tight_layout()  # Adjust layout to avoid overlap
     plt.show()
 
+# Boxplot and violinplot analysis
+def plot_dynamic_boxplots_violinplots(df, col_series, plot_type='boxplot', ncols=6, figsize=(26, 18), orientation='v', hue=None):
+    """
+    Creates a dynamic grid of either boxplots or violin plots for multiple numerical columns.
+
+    Parameters:
+    ----------
+    df : pandas.DataFrame
+        The DataFrame containing the data to plot.
+    col_series : list of str
+        List of column names to include in the plots.
+    plot_type : str, optional, default='boxplot'
+        Type of plot to generate. Options are 'boxplot' or 'violinplot'.
+    ncols : int, optional, default=6
+        Number of columns in the subplot grid. Adjust this value to change grid width.
+    figsize : tuple, optional, default=(26, 18)
+        Size of the figure to control plot dimensions.
+    orientation : str, optional, default='v'
+        Orientation of the plots. Use 'v' for vertical and 'h' for horizontal.
+    hue : str, optional, default=None
+        Column name to use for color encoding. Creates separate plots for each category.
+
+    Returns:
+    -------
+    None
+        Displays a grid of plots.
+
+    Examples:
+    --------
+    >>> # Create vertical boxplots
+    >>> plot_dynamic_boxplots_violinplots(df, ['col1', 'col2'], plot_type='boxplot', orientation='v')
+
+    >>> # Create horizontal violin plots with categorical splitting
+    >>> plot_dynamic_boxplots_violinplots(df, ['col1', 'col2'], plot_type='violinplot',
+                                        orientation='h', hue='category')
+    """
+    # Validate plot_type parameter
+    if plot_type not in ['boxplot', 'violinplot']:
+        raise ValueError("plot_type must be either 'boxplot' or 'violinplot'")
+
+    # Calculate required number of rows based on number of plots and specified columns
+    num_plots = len(col_series)
+    nrows = math.ceil(num_plots / ncols)
+
+    # Adjust figsize based on orientation
+    if orientation == 'h':
+        figsize = (figsize[1], figsize[0])  # Swap width and height for horizontal plots
+
+    fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+    
+    # Convert ax to array if it's a single subplot
+    if num_plots == 1:
+        ax = np.array([ax])
+    else: 
+        ax = ax.flatten()  # Flatten the axes array for easy indexing
+
+    # Generate plots for each column
+    for i, col in enumerate(col_series):
+        if plot_type == 'boxplot':
+            if orientation == 'v':
+                sns.boxplot(data=df, ax=ax[i], y=col, orient='v', hue=hue)
+                ax[i].set_title(f'Boxplot of {col}')
+            else:  # orientation == 'h'
+                sns.boxplot(data=df, ax=ax[i], x=col, orient='h', hue=hue)
+                ax[i].set_title(f'Boxplot of {col}')
+        else: # violinplot
+            if orientation == 'v':
+                sns.violinplot(data=df, ax=ax[i], y=col, orient='v', hue=hue, inner_kws=dict(box_width=15, whis_width=2))
+                ax[i].set_title(f'Violinplot of {col}')
+            else:  # orientation == 'h'
+                sns.violinplot(data=df, ax=ax[i], x=col, orient='h', hue=hue, inner_kws=dict(box_width=15, whis_width=2))
+                ax[i].set_title(f'Violinplot of {col}')
+
+    # Remove any unused subplots if total subplots exceed columns in cols
+    for j in range(num_plots, len(ax)):
+        fig.delaxes(ax[j])
+
+    plt.tight_layout()  # Adjust layout to avoid overlap
+    plt.show()
+
 ## Distribution type analysis
 def identify_distribution_types(df, col_series, uniform_cols=None, multimodal_cols=None):
     """
@@ -621,7 +691,7 @@ def identify_distribution_types(df, col_series, uniform_cols=None, multimodal_co
         List of column names to analyze for distribution type.
     uniform_cols : list of str, optional
         List of column names suspected to be uniform. Default is None.
-    bimodal_cols : list of str, optional
+    multimodal_cols : list of str, optional
         List of column names suspected to be bimodal/multimodal. Default is None.
 
     Returns:
