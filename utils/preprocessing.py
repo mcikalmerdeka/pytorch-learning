@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import math
 
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+from sklearn.impute import KNNImputer, IterativeImputer
+
 # =====================================================================Functions for data pre-processing========================================================================
 
 ## Checking basic data information
@@ -44,67 +47,226 @@ def drop_columns(data, columns):
     return data.drop(columns=columns, errors='ignore')
 
 ## Handle missing values function
-def handle_missing_values(data, columns, strategy='fill', imputation_method='median'):
-    # Return the original data if the column is empty
-    if columns is None:
-        return data
+def handle_missing_values(data, columns, strategy='median', imputer=None, n_neighbors=5):
+    """
+    Handle missing values using various imputation strategies.
     
-    # Impute missing values based on the strategy
-    if strategy == 'fill':
-        if imputation_method == 'median':
-            return data[columns].fillna(data[columns].median())
-        elif imputation_method == 'mean':
-            return data[columns].fillna(data[columns].mean())
-        elif imputation_method == 'mode':
-            return data[columns].fillna(data[columns].mode().iloc[0])
-        elif imputation_method == 'ffill':
-            return data[columns].fillna(method='ffill')
-        elif imputation_method == 'bfill':
-            return data[columns].fillna(method='bfill')
-        else:
-            return data[columns].fillna(data[columns].median())
-
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The dataframe to process
+    columns : list
+        List of column names to impute
+    strategy : str, default='median'
+        Imputation method:
+        - 'median', 'mean', 'mode': Simple imputation
+        - 'ffill', 'bfill': Forward/backward fill
+        - 'knn': K-Nearest Neighbors imputation (advanced)
+        - 'iterative': Iterative imputation using other features (advanced)
+        - 'remove': Drop rows with missing values
+    imputer : sklearn imputer object, default=None
+        Pre-fitted imputer for test data (for 'knn' or 'iterative')
+    n_neighbors : int, default=5
+        Number of neighbors for KNN imputation
+    
+    Returns:
+    --------
+    df_imputed : pd.DataFrame
+        Dataframe with imputed values
+    imputer : sklearn imputer object or None
+        The fitted imputer (for 'knn' or 'iterative' methods)
+    
+    Example:
+    --------
+    # Simple imputation
+    df_imputed, _ = handle_missing_values(df, columns=['col1', 'col2'], strategy='median')
+    
+    # KNN imputation on training data
+    X_train_imputed, imputer = handle_missing_values(X_train, columns=['col1', 'col2'], 
+                                                       strategy='knn', n_neighbors=5)
+    
+    # Apply same imputer on test data
+    X_test_imputed, _ = handle_missing_values(X_test, columns=['col1', 'col2'], 
+                                               strategy='knn', imputer=imputer)
+    """
+    if columns is None or len(columns) == 0:
+        return data, None
+    
+    df_imputed = data.copy()
+    
+    # Validate columns exist
+    missing_cols = [col for col in columns if col not in df_imputed.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+    
     # Remove rows with missing values
-    elif strategy == 'remove':
-        return data.dropna(subset=columns)
+    if strategy == 'remove':
+        return df_imputed.dropna(subset=columns), None
+    
+    # Simple imputation methods
+    elif strategy in ['median', 'mean', 'mode']:
+        if strategy == 'median':
+            df_imputed[columns] = df_imputed[columns].fillna(df_imputed[columns].median())
+        elif strategy == 'mean':
+            df_imputed[columns] = df_imputed[columns].fillna(df_imputed[columns].mean())
+        elif strategy == 'mode':
+            for col in columns:
+                mode_val = df_imputed[col].mode()
+                if len(mode_val) > 0:
+                    df_imputed[col] = df_imputed[col].fillna(mode_val.iloc[0])
+        return df_imputed, None
+    
+    # Forward/backward fill
+    elif strategy in ['ffill', 'bfill']:
+        df_imputed[columns] = df_imputed[columns].fillna(method=strategy)
+        return df_imputed, None
+    
+    # KNN imputation (advanced)
+    elif strategy == 'knn':
+        if imputer is None:
+            imputer = KNNImputer(n_neighbors=n_neighbors)
+            df_imputed[columns] = imputer.fit_transform(df_imputed[columns])
+        else:
+            df_imputed[columns] = imputer.transform(df_imputed[columns])
+        return df_imputed, imputer
+    
+    # Iterative imputation (advanced - similar to MICE)
+    elif strategy == 'iterative':
+        if imputer is None:
+            imputer = IterativeImputer(random_state=42, max_iter=10)
+            df_imputed[columns] = imputer.fit_transform(df_imputed[columns])
+        else:
+            df_imputed[columns] = imputer.transform(df_imputed[columns])
+        return df_imputed, imputer
+    
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}. Use 'median', 'mean', 'mode', 'ffill', 'bfill', 'knn', 'iterative', or 'remove'")
 
 ## Handle outliers function
-def filter_outliers(data, col_series, method='iqr', threshold=3):
-    # Return the original data if the column series is empty
-    if col_series is None:
-        return data
+def filter_outliers(data, columns, method='iqr', threshold=1.5, return_mask=False):
+    """
+    Filter outliers from specified columns using IQR or Z-score method.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The dataframe to filter
+    columns : list
+        List of column names to check for outliers
+    method : str, default='iqr'
+        Method to detect outliers: 'iqr' or 'zscore'
+    threshold : float, default=1.5
+        For IQR: multiplier for IQR range (default 1.5)
+        For Z-score: max absolute z-score (default 1.5, typically use 3)
+    return_mask : bool, default=False
+        If True, returns (filtered_data, mask). Useful for debugging.
+    
+    Returns:
+    --------
+    pd.DataFrame or tuple
+        Filtered dataframe, or (filtered_data, mask) if return_mask=True
+    """
+    if columns is None or len(columns) == 0:
+        return data if not return_mask else (data, np.array([True] * len(data)))
 
-    # Validate the method parameter
     if method.lower() not in ['iqr', 'zscore']:
         raise ValueError("Method must be either 'iqr' or 'zscore'")
     
     # Start with all rows marked as True (non-outliers)
     filtered_entries = np.array([True] * len(data))
     
-    # Loop through each column
-    for col in col_series:
-        if method.lower() == 'iqr':
-            # IQR method
-            Q1 = data[col].quantile(0.25)  # First quartile (25th percentile)
-            Q3 = data[col].quantile(0.75)  # Third quartile (75th percentile)
-            IQR = Q3 - Q1  # Interquartile range
-            lower_bound = Q1 - (IQR * 1.5)  # Lower bound for outliers
-            upper_bound = Q3 + (IQR * 1.5)  # Upper bound for outliers
+    for col in columns:
+        if col not in data.columns:
+            raise ValueError(f"Column '{col}' not found in dataframe")
 
-            # Create a filter that identifies non-outliers for the current column
+        # IQR method
+        if method.lower() == 'iqr':
+            Q1 = data[col].quantile(0.25)
+            Q3 = data[col].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - (IQR * threshold)
+            upper_bound = Q3 + (IQR * threshold)
             filter_outlier = ((data[col] >= lower_bound) & (data[col] <= upper_bound))
             
-        elif method.lower() == 'zscore':  # zscore method
-            # Calculate Z-Scores and create filter
+        # Z-score method
+        elif method.lower() == 'zscore':
             z_scores = np.abs(stats.zscore(data[col]))
-
-            # Create a filter that identifies non-outliers
             filter_outlier = (z_scores < threshold)
         
-        # Update the filter to exclude rows that have outliers in the current column
+        # Combine filters
         filtered_entries = filtered_entries & filter_outlier
     
+    # Return the filtered data and mask if requested
+    if return_mask:
+        return data[filtered_entries], filtered_entries
     return data[filtered_entries]
+
+## Feature scaling function
+def feature_scaling(data, columns, method='standard', scaler=None, apply_log=False):
+    """
+    General feature scaling function with flexible options.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The dataframe to scale
+    columns : list
+        List of column names to scale
+    method : str, default='standard'
+        Scaling method: 'standard', 'minmax', or 'robust'
+    scaler : sklearn scaler object, default=None
+        Pre-fitted scaler for test data. If None, fits a new scaler (for training data)
+    apply_log : bool, default=False
+        Whether to apply log1p transformation before scaling
+    
+    Returns:
+    --------
+    df_scaled : pd.DataFrame
+        Dataframe with scaled features
+    scaler : sklearn scaler object
+        The fitted scaler (to reuse on test data)
+    
+    Example:
+    --------
+    # For training data
+    X_train_scaled, scaler = feature_scaling(X_train, columns=['col1', 'col2'], method='standard')
+    
+    # For test data (reuse the fitted scaler)
+    X_test_scaled, _ = feature_scaling(X_test, columns=['col1', 'col2'], scaler=scaler)
+    """
+    df_scaled = data.copy()
+    
+    # Validate columns exist
+    missing_cols = [col for col in columns if col not in df_scaled.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+    
+    # Convert to float
+    df_scaled[columns] = df_scaled[columns].astype(float)
+    
+    # Apply log transformation if requested
+    if apply_log:
+        for col in columns:
+            df_scaled[col] = np.log1p(df_scaled[col])
+    
+    # Initialize scaler if not provided (training mode)
+    if scaler is None:
+        if method == 'standard':
+            scaler = StandardScaler()
+        elif method == 'minmax':
+            scaler = MinMaxScaler()
+        elif method == 'robust':
+            scaler = RobustScaler(quantile_range=(5, 95))
+        else:
+            raise ValueError(f"Unknown scaling method: {method}. Use 'standard', 'minmax', or 'robust'")
+        
+        # Fit and transform (training data)
+        df_scaled[columns] = scaler.fit_transform(df_scaled[columns])
+    else:
+        # Only transform (test data)
+        df_scaled[columns] = scaler.transform(df_scaled[columns])
+    
+    return df_scaled, scaler
 
 # =====================================================================Functions for statistical summary========================================================================
 
