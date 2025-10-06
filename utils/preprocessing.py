@@ -330,6 +330,177 @@ def feature_scaling(data, columns, method='standard', scaler=None, apply_log=Fal
     
     return df_scaled, scaler
 
+## Feature encoding function
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
+
+def feature_encoding(data, ordinal_columns=None, nominal_columns=None, 
+                     ordinal_categories=None, drop_first=True, 
+                     preserve_dtypes=True, handle_unknown='error'):
+    """
+    General feature encoding function using sklearn ColumnTransformer.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The dataframe to encode
+    ordinal_columns : list, optional
+        List of column names for ordinal encoding
+    nominal_columns : list, optional
+        List of column names for one-hot encoding
+    ordinal_categories : dict, optional
+        Dictionary mapping ordinal column names to their category order lists
+        Example: {'Education': ['SMA', 'D3', 'S1', 'S2', 'S3']}
+    drop_first : bool, default=True
+        Whether to drop first category in one-hot encoding (avoid dummy trap)
+    preserve_dtypes : bool, default=True
+        Whether to preserve original dtypes for non-encoded columns
+    handle_unknown : str, default='error'
+        How to handle unknown categories: 'error', 'use_encoded_value', 'ignore'
+        
+    Returns:
+    --------
+    pd.DataFrame
+        Encoded dataframe with preserved column order and dtypes
+        
+    Examples:
+    ---------
+    >>> # Simple one-hot encoding
+    >>> df_encoded = feature_encoding(df, nominal_columns=['Color', 'Size'])
+    
+    >>> # Ordinal encoding with custom order
+    >>> df_encoded = feature_encoding(
+    ...     df, 
+    ...     ordinal_columns=['Education'],
+    ...     ordinal_categories={'Education': ['SMA', 'D3', 'S1', 'S2', 'S3']}
+    ... )
+    
+    >>> # Mixed encoding
+    >>> df_encoded = feature_encoding(
+    ...     df,
+    ...     ordinal_columns=['Education', 'Age_Group'],
+    ...     nominal_columns=['Marital_Status'],
+    ...     ordinal_categories={
+    ...         'Education': ['SMA', 'D3', 'S1', 'S2', 'S3'],
+    ...         'Age_Group': ['Young Adult', 'Middle Adult', 'Senior Adult']
+    ...     }
+    ... )
+    """
+    # Initialize defaults
+    ordinal_columns = ordinal_columns or []
+    nominal_columns = nominal_columns or []
+    ordinal_categories = ordinal_categories or {}
+    
+    # Validate inputs
+    all_encoding_cols = ordinal_columns + nominal_columns
+    missing_cols = [col for col in all_encoding_cols if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+    
+    if not ordinal_columns and not nominal_columns:
+        raise ValueError("Must specify at least one column to encode (ordinal_columns or nominal_columns)")
+    
+    # Validate ordinal categories
+    for col in ordinal_columns:
+        if col not in ordinal_categories:
+            raise ValueError(f"Ordinal column '{col}' requires category order in ordinal_categories")
+        
+        unique_vals = data[col].unique()
+        if not all(val in ordinal_categories[col] for val in unique_vals):
+            print(f"Warning: Some values in '{col}' are not in the specified category order")
+    
+    # Copy dataframe
+    df_preprocessed = data.copy()
+    
+    # Store original dtypes
+    original_dtypes = df_preprocessed.dtypes if preserve_dtypes else None
+    
+    # Identify datetime columns to preserve separately
+    datetime_columns = df_preprocessed.select_dtypes(include=['datetime64']).columns.tolist()
+    datetime_data = df_preprocessed[datetime_columns].copy() if datetime_columns else None
+    
+    # Build transformers list
+    transformers = []
+    
+    # Add ordinal encoders
+    for col in ordinal_columns:
+        transformers.append((
+            f'ordinal_{col}',
+            OrdinalEncoder(
+                categories=[ordinal_categories[col]], 
+                dtype=np.float64,
+                handle_unknown=handle_unknown
+            ),
+            [col]
+        ))
+    
+    # Add one-hot encoders
+    for col in nominal_columns:
+        transformers.append((
+            f'onehot_{col}',
+            OneHotEncoder(
+                drop='first' if drop_first else None,
+                sparse_output=False,
+                dtype=np.float64,
+                handle_unknown='ignore' if handle_unknown == 'ignore' else 'error'
+            ),
+            [col]
+        ))
+    
+    # Create column transformer
+    preprocessor = ColumnTransformer(
+        transformers=transformers,
+        remainder='passthrough',
+        verbose_feature_names_out=False
+    )
+    
+    # Remove datetime columns before transformation
+    df_for_transform = df_preprocessed.drop(columns=datetime_columns) if datetime_columns else df_preprocessed
+    
+    # Apply transformation
+    df_encoded = preprocessor.fit_transform(df_for_transform)
+    
+    # Build column names
+    encoded_column_names = []
+    
+    # Add ordinal column names
+    encoded_column_names.extend(ordinal_columns)
+    
+    # Add one-hot encoded column names
+    for col in nominal_columns:
+        categories = df_for_transform[col].unique()
+        if drop_first:
+            # Sort to ensure consistent ordering
+            categories = sorted(categories)
+            encoded_column_names.extend([f'{col}_{cat}' for cat in categories[1:]])
+        else:
+            encoded_column_names.extend([f'{col}_{cat}' for cat in sorted(categories)])
+    
+    # Add passthrough columns
+    passthrough_cols = [c for c in df_for_transform.columns if c not in all_encoding_cols]
+    encoded_column_names.extend(passthrough_cols)
+    
+    # Convert to DataFrame
+    df_encoded = pd.DataFrame(df_encoded, columns=encoded_column_names, index=data.index)
+    
+    # Add back datetime columns
+    if datetime_columns:
+        for col in datetime_columns:
+            df_encoded[col] = datetime_data[col]
+    
+    # Preserve original dtypes for non-encoded columns
+    if preserve_dtypes:
+        encoded_cols = ordinal_columns + [col for col in df_encoded.columns if any(col.startswith(f'{nc}_') for nc in nominal_columns)]
+        
+        for col in df_encoded.columns:
+            if col in original_dtypes and col not in encoded_cols:
+                try:
+                    df_encoded[col] = df_encoded[col].astype(original_dtypes[col])
+                except Exception as e:
+                    print(f"Warning: Could not convert column '{col}' back to {original_dtypes[col]}. Error: {e}")
+    
+    return df_encoded
+
 # ╔══════════════════════════════════════════════════════════════════════════════════╗
 # ║                       Functions for Statistical Summary                          ║
 # ╚══════════════════════════════════════════════════════════════════════════════════╝
