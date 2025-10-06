@@ -15,6 +15,29 @@ from sklearn.impute import KNNImputer
 
 ## Checking basic data information
 def check_data_information(data, cols):
+    """
+    Check basic data information including data types, null values, duplicates, and unique values.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The DataFrame to analyze
+    cols : list
+        List of column names to check
+    
+    Returns:
+    --------
+    pd.DataFrame
+        A DataFrame containing information about each column
+    
+    Examples:
+    ---------
+    >>> # Check information for all columns
+    >>> info_df = check_data_information(df, df.columns.tolist())
+    
+    >>> # Check information for specific columns
+    >>> info_df = check_data_information(df, ['age', 'salary', 'department'])
+    """
     list_item = []
     for col in cols:
         # Convert unique values to string representation
@@ -571,18 +594,26 @@ def feature_encoding(data, ordinal_columns=None, nominal_columns=None,
 # ╚══════════════════════════════════════════════════════════════════════════════════╝
 
 ## Describe numerical columns
-def describe_numerical_combined(data, col_series, target_col=None):
+def describe_numerical_combined(data, col_series, hue=None):
     """
     Generate descriptive statistics for numerical columns in a dataframe,
-    both overall and optionally grouped by target variable.
+    both overall and optionally grouped by a categorical variable.
     
     Parameters:
     data (pd.DataFrame): The dataframe containing the numerical columns
     col_series (list): The list of numerical columns to describe
-    target_col (str, optional): The name of the target column for classification
+    hue (str, optional): The name of the categorical column to group by
     
     Returns:
-    pd.DataFrame: A dataframe containing descriptive statistics, with target classes if specified
+    pd.DataFrame: A dataframe containing descriptive statistics, with hue classes if specified
+    
+    Examples:
+    ---------
+    >>> # Overall statistics only
+    >>> stats = describe_numerical_combined(df, ['age', 'salary', 'experience'])
+    
+    >>> # Statistics grouped by a categorical variable
+    >>> stats = describe_numerical_combined(df, ['age', 'salary'], hue='department')
     """
     # Overall statistics (original approach)
     overall_summary = data[col_series].describe().transpose().reset_index()
@@ -604,14 +635,14 @@ def describe_numerical_combined(data, col_series, target_col=None):
     
     final_summary = overall_summary
     
-    # If target column is provided, add class-specific statistics
-    if target_col is not None:
-        target_classes = sorted(data[target_col].unique())
+    # If hue column is provided, add class-specific statistics
+    if hue is not None:
+        target_classes = sorted(data[hue].unique())
         class_summaries = []
         
         for target_class in target_classes:
             # Filter data for current class
-            class_data = data[data[target_col] == target_class]
+            class_data = data[data[hue] == target_class]
             
             # Calculate basic statistics
             class_summary = class_data[col_series].describe().transpose().reset_index()
@@ -659,18 +690,26 @@ def describe_numerical_combined(data, col_series, target_col=None):
     return final_summary
 
 # Describe categorical columns
-def describe_categorical_combined(data, col_series, target_col=None):
+def describe_categorical_combined(data, col_series, hue=None):
     """
     Generate descriptive statistics for categorical columns in a dataframe,
-    both overall and optionally grouped by target variable.
+    both overall and optionally grouped by a categorical variable.
     
     Parameters:
     data (pd.DataFrame): The dataframe containing the categorical columns
     col_series (list): The list of categorical columns to describe
-    target_col (str, optional): The name of the target column for classification
+    hue (str, optional): The name of the categorical column to group by
     
     Returns:
-    pd.DataFrame: A dataframe containing descriptive statistics, with target classes if specified
+    pd.DataFrame: A dataframe containing descriptive statistics, with hue classes if specified
+    
+    Examples:
+    ---------
+    >>> # Overall statistics only
+    >>> stats = describe_categorical_combined(df, ['gender', 'department', 'job_title'])
+    
+    >>> # Statistics grouped by a categorical variable
+    >>> stats = describe_categorical_combined(df, ['gender', 'job_title'], hue='department')
     """
     # Overall statistics
     cats_summary = data[col_series].describe().transpose().reset_index().rename(columns={'index': 'Feature'})
@@ -692,14 +731,14 @@ def describe_categorical_combined(data, col_series, target_col=None):
     
     final_summary = cats_summary
     
-    # If target column is provided, add class-specific statistics
-    if target_col is not None:
-        target_classes = sorted(data[target_col].unique())
+    # If hue column is provided, add class-specific statistics
+    if hue is not None:
+        target_classes = sorted(data[hue].unique())
         class_summaries = []
         
         for target_class in target_classes:
             # Filter data for current class
-            class_data = data[data[target_col] == target_class]
+            class_data = data[data[hue] == target_class]
             
             # Calculate basic statistics
             class_summary = class_data[col_series].describe().transpose().reset_index()
@@ -748,7 +787,7 @@ def describe_categorical_combined(data, col_series, target_col=None):
 # Describe date columns
 from datetime import datetime
 
-def analyze_date_columns(df, date_columns):
+def describe_date_columns(df, date_columns):
     """
     Comprehensive analysis of date columns including various temporal features
     
@@ -758,6 +797,14 @@ def analyze_date_columns(df, date_columns):
     
     Returns:
     pandas.DataFrame: dates_summary statistics and temporal features for each date column
+    
+    Examples:
+    ---------
+    >>> # Analyze single date column
+    >>> date_stats = describe_date_columns(df, ['purchase_date'])
+    
+    >>> # Analyze multiple date columns
+    >>> date_stats = describe_date_columns(df, ['start_date', 'end_date', 'modified_date'])
     """
     dates_summary = df[date_columns].describe().transpose()
     
@@ -986,6 +1033,19 @@ def identify_distribution_types(df, col_series, uniform_cols=None, multimodal_co
 
     Returns:
     pd.DataFrame: A DataFrame containing the columns' names, skewness values, kurtosis values, and identified distribution type.
+    
+    Examples:
+    ---------
+    >>> # Basic distribution identification
+    >>> dist_types = identify_distribution_types(df, ['age', 'salary', 'experience'])
+    
+    >>> # With manual specification of distribution types
+    >>> dist_types = identify_distribution_types(
+    ...     df, 
+    ...     ['age', 'salary', 'rating', 'score'],
+    ...     uniform_cols=['rating'],
+    ...     multimodal_cols=['score']
+    ... )
     """
     # Initialize lists to store results
     mean_list = []
@@ -1077,6 +1137,37 @@ def plot_dynamic_countplot(df, col_series, ncols=6, figsize=(26, 18), stat='coun
     -------
     None
         Displays a grid of countplots.
+    
+    Examples:
+    ---------
+    >>> # Basic countplot
+    >>> plot_dynamic_countplot(df, ['gender', 'department', 'job_title'])
+    
+    >>> # Countplot with hue grouping
+    >>> plot_dynamic_countplot(df, ['department', 'job_title'], hue='gender')
+    
+    >>> # With custom order
+    >>> order_list = [['A', 'B', 'C'], ['Small', 'Medium', 'Large']]
+    >>> plot_dynamic_countplot(df, ['category', 'size'], order=order_list, ncols=2)
+    
+    >>> # Show top 5 categories for each column (most frequent)
+    >>> cats_cols = ['Category', 'Province', 'City']
+    >>> plot_dynamic_countplot(
+    ...     df=df,
+    ...     col_series=cats_cols,
+    ...     ncols=1,
+    ...     figsize=(12, 10),
+    ...     order=[df[cat].value_counts().iloc[:5].index.tolist() for cat in cats_cols]
+    ... )
+    
+    >>> # Show bottom 5 categories for each column (least frequent)
+    >>> plot_dynamic_countplot(
+    ...     df=df,
+    ...     col_series=cats_cols,
+    ...     ncols=1,
+    ...     figsize=(12, 10),
+    ...     order=[df[cat].value_counts().iloc[-5:].index.tolist() for cat in cats_cols]
+    ... )
     """
 
     # Calculate required number of rows based on number of plots and specified columns
