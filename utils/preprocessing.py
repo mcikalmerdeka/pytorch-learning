@@ -46,7 +46,72 @@ def check_data_information(data, cols):
 
 ## Drop columns function
 def drop_columns(data, columns):
+    """
+    Drop specified columns from a DataFrame.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The DataFrame from which to drop columns
+    columns : str or list of str
+        Column name(s) to drop. Can be a single column name or a list of column names.
+    
+    Returns:
+    --------
+    pd.DataFrame
+        A new DataFrame with specified columns removed
+    
+    Examples:
+    ---------
+    >>> # Drop single column
+    >>> df_new = drop_columns(df, 'column_to_drop')
+    
+    >>> # Drop multiple columns
+    >>> df_new = drop_columns(df, ['col1', 'col2', 'col3'])
+    """
+    # Convert single column to list for consistent handling
+    if isinstance(columns, str):
+        columns = [columns]
+    
     return data.drop(columns=columns, errors='ignore')
+
+## Change binary column data type
+def change_binary_dtype(data, column, target_type='categorical'):
+    """
+    Convert binary columns between numerical (0/1) and categorical (No/Yes) representations.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        The DataFrame containing the binary column
+    column : str
+        The name of the column to convert
+    target_type : str, default='categorical'
+        The desired data type for the column:
+        - 'categorical': Convert 0/1 to 'No'/'Yes'
+        - 'numerical': Convert 'No'/'Yes' back to 0/1
+    
+    Returns:
+    --------
+    pd.Series
+        The converted column
+    
+    Examples:
+    ---------
+    >>> # Convert numerical to categorical
+    >>> df['status'] = change_binary_dtype(df, 'status', target_type='categorical')
+    >>> # Result: 0 -> 'No', 1 -> 'Yes'
+    
+    >>> # Convert categorical back to numerical
+    >>> df['status'] = change_binary_dtype(df, 'status', target_type='numerical')
+    >>> # Result: 'No' -> 0, 'Yes' -> 1
+    """
+    if target_type == 'categorical':
+        return data[column].map({0: 'No', 1: 'Yes'})
+    elif target_type == 'numerical':
+        return data[column].map({'No': 0, 'Yes': 1})
+    else:
+        raise ValueError("target_type must be either 'categorical' or 'numerical'")
 
 ## Handle missing values function
 def handle_missing_values(data, columns, strategy='median', imputer=None, n_neighbors=5):
@@ -680,6 +745,60 @@ def describe_categorical_combined(data, col_series, target_col=None):
     
     return final_summary
 
+# Describe date columns
+from datetime import datetime
+
+def analyze_date_columns(df, date_columns):
+    """
+    Comprehensive analysis of date columns including various temporal features
+    
+    Parameters:
+    df (pandas.DataFrame): DataFrame containing date columns
+    date_columns (list): List of column names containing dates
+    
+    Returns:
+    pandas.DataFrame: dates_summary statistics and temporal features for each date column
+    """
+    dates_summary = df[date_columns].describe().transpose()
+    
+    # Basic range calculations
+    dates_summary['date_range_days'] = dates_summary['max'] - dates_summary['min']
+    dates_summary['date_range_months'] = dates_summary['date_range_days'].apply(lambda x: x.days / 30)
+    dates_summary['date_range_years'] = dates_summary['date_range_days'].apply(lambda x: x.days / 365)
+    
+    # Additional temporal features
+    for col in date_columns:
+        # Distribution across time periods
+        dates = df[col].dropna()
+        dates_summary.loc[col, 'unique_years'] = dates.dt.year.nunique()
+        dates_summary.loc[col, 'unique_months'] = dates.dt.to_period('M').nunique()
+        dates_summary.loc[col, 'unique_days'] = dates.dt.date.nunique()
+        
+        # Temporal patterns
+        dates_summary.loc[col, 'weekend_percentage'] = (dates.dt.dayofweek.isin([5, 6]).mean()) * 100
+        dates_summary.loc[col, 'business_hours_percentage'] = (
+            dates[dates.dt.hour.between(9, 17)].count() / dates.count()
+        ) * 100 if hasattr(dates.dt, 'hour') else np.nan
+        
+        # Seasonality indicators
+        dates_summary.loc[col, 'most_common_month'] = dates.dt.month.mode().iloc[0]
+        dates_summary.loc[col, 'most_common_weekday'] = dates.dt.day_name().mode().iloc[0]
+        
+        # Gaps analysis
+        sorted_dates = dates.sort_values()
+        gaps = sorted_dates.diff().dropna()
+        dates_summary.loc[col, 'max_gap_days'] = gaps.dt.days.max()
+        dates_summary.loc[col, 'median_gap_days'] = gaps.dt.days.median()
+        
+        # Future/Past analysis
+        now = datetime.now()
+        dates_summary.loc[col, 'future_dates_percentage'] = (dates > now).mean() * 100
+        
+        # Regularity check
+        dates_summary.loc[col, 'is_regular_interval'] = gaps.dt.days.std() < 1
+    
+    return dates_summary
+
 # ╔══════════════════════════════════════════════════════════════════════════════════╗
 # ║                       Functions for Data Visualization                          ║
 # ╚══════════════════════════════════════════════════════════════════════════════════╝
@@ -931,3 +1050,80 @@ def identify_distribution_types(df, col_series, uniform_cols=None, multimodal_co
         dist.loc[dist['Column Name'].isin(multimodal_cols), 'Type of Distribution'] = 'Multi-modal Distribution'
 
     return dist
+
+## Countplot analysis
+def plot_dynamic_countplot(df, col_series, ncols=6, figsize=(26, 18), stat='count', hue=None, order=None):
+    """
+    Plots a dynamic grid of countplot for a list of categorical columns from a DataFrame.
+
+    Parameters:
+    ----------
+    df : pandas.DataFrame
+        The DataFrame containing the data to plot.
+    col_series : list of str
+        List of column names to include in the countplots.
+    ncols : int, optional, default=6
+        Number of columns in the subplot grid. Adjust this value to change grid width.
+    figsize : tuple, optional, default=(26, 18)
+        Size of the figure to control plot dimensions.
+    stat : str, optional, default='count'
+        The statistic to compute for the bars
+    hue : str, optional, default=None
+        Column name to use for color encoding
+    order : list, optional, default=None
+        Specific ordering for the categorical variables
+
+    Returns:
+    -------
+    None
+        Displays a grid of countplots.
+    """
+
+    # Calculate required number of rows based on number of plots and specified columns
+    num_plots = len(col_series)
+    nrows = math.ceil(num_plots / ncols)
+
+    fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+    
+    # Convert ax to array if it's a single subplot
+    if num_plots == 1:
+        ax = np.array([ax])
+    else: 
+        ax = ax.flatten()  # Flatten the axes array for easy indexing
+
+    # Generate countplot for each column
+    for i, col in enumerate(col_series):
+        # Get the specific order for this column if provided
+        if isinstance(order, list):
+            current_order = order[i].tolist() if hasattr(order[i], 'tolist') else order[i]
+        else:
+            current_order = None
+
+        sns.countplot(data=df,
+                     ax=ax[i],
+                     x=col,
+                     stat=stat,
+                     hue=hue,
+                     order=current_order)
+        if hue is not None:
+            ax[i].set_title(f'Countplot sof {col} by {hue}s')
+        else:
+            ax[i].set_title(f'Countplot of {col}')
+        ax[i].set_ylabel(f'Count of {col}')
+        ax[i].set_xlabel(f'{col}')
+
+        # Add value labels on top of bars
+        for p in ax[i].patches:
+            ax[i].annotate(
+                f'{int(p.get_height())}',  # The text to display
+                (p.get_x() + p.get_width() / 2., p.get_height()),  # The position
+                ha='center',  # Horizontal alignment
+                va='bottom'   # Vertical alignment
+            )
+
+    # Remove any unused subplots if total subplots exceed columns in cols
+    for j in range(num_plots, len(ax)):
+        fig.delaxes(ax[j])
+
+    plt.tight_layout()  # Adjust layout to avoid overlap
+    plt.show()
