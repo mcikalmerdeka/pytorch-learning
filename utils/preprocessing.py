@@ -1382,3 +1382,44 @@ def plot_dynamic_countplot(df, col_series, ncols=6, figsize=(26, 18), stat='coun
 
     plt.tight_layout()  # Adjust layout to avoid overlap
     plt.show()
+
+## Correlation heatmap analysis on numerical features and target
+def plot_correlation_heatmap(df, col_series, corr_method='pearson', figsize=(8, 6), cmap='coolwarm'):
+    """
+    Plots a correlation heatmap for the specified columns in a dataframe.
+
+    Parameters:
+    ----------
+    df : pd.DataFrame
+        The input dataframe containing the data.
+    col_series : list
+        List of column names to include in the correlation matrix.
+    corr_method : str 
+        Correlation method ('pearson', 'spearman', or 'kendall'). Default is 'pearson'.
+    figsize : tuple
+        Size of the heatmap figure (width, height). Default is (8, 6).
+    cmap : str
+        Color map for the heatmap. Default is 'coolwarm'.
+
+    Returns:
+    -------
+    None
+        Displays the correlation heatmap.
+    
+    Examples:
+    --------
+    >>> included_col = ['Income', 'Total_Spending', 'Age', 'CVR']
+    >>> plot_correlation_heatmap(df_filtered_outliers, col_series=included_col, corr_method='pearson')
+    >>> plot_correlation_heatmap(df_filtered_outliers, col_series=included_col, corr_method='spearman')
+    """
+    
+    # Compute correlation matrix
+    correlation_matrix = df[col_series].corr(method=corr_method)
+    
+    # Plot heatmap
+    plt.figure(figsize=figsize)
+    sns.heatmap(data=correlation_matrix, cmap=cmap, annot=True, fmt='.3f', vmin=-1, vmax=1)
+    plt.title(f'{corr_method.capitalize()} Correlation')
+    
+    plt.tight_layout()
+    plt.show()
